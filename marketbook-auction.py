@@ -44,6 +44,7 @@ class Crawler(QWebView):
     def __init__(self, app, cfg):
         self.app = app
         self.cfg = cfg
+        self.houses = []
         self.sitemap = []
         self.categories = []
         self.modelList = []
@@ -305,10 +306,16 @@ class Crawler(QWebView):
             except DuplicateKeyError as e:
                 self.log(str(e))
 
+        if company is not None and len(company) != 0:
+            if company not in self.houses:
+                self.houses.append(company)
+                self.saveHouse(company)
+
     def run(self, url):
         self.log("Starting crawler")
         self.nextPage = url
         self.loadMetaData()
+        self.loadHouses()
         if self.cfg.getboolean('main', 'gui'):
             self.show()
         self.loadNextPage()
@@ -355,6 +362,18 @@ class Crawler(QWebView):
         if self.nextPage != None and self.isDuplicateListing(self.nextPage):
             self.log("Metadata NextPage is a duplicate listing, removing from URL queue")
             self.nextPage = None
+
+    def loadHouses(self):
+        self.log("Loading houses")
+        for doc in self.db['houses.marketbook-auction'].find():
+            self.houses.append(doc['house'])
+
+    def saveHouse(self, house):
+        doc = {
+            'house': house,
+            'upload': 0
+        }
+        self.db['houses.marketbook-auction'].insert(doc)
 
     def isDuplicateListing(self, url):
         doc = self.db.listings.find_one({"url": url})
