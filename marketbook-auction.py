@@ -234,7 +234,7 @@ class Crawler(QWebView):
         category = None
         listingTitle = soup.find(id="hListingTitle")
         if listingTitle != None:
-            category = soup.title.string.strip()[(len(listingTitle.string) + 1):].replace(' Versteigerungsergebnisse', '').replace(' Zu MarketBook.de', '')
+            category = soup.title.string.strip()[(len(listingTitle.string) + 1):].replace(' Versteigerungsergebnisse', '').replace('Zu MarketBook.de', '').strip()
             if len(category) == 0:
                 category = None
         info = soup.find("td", {"class": "info"})
