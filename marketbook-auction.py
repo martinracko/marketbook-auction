@@ -371,7 +371,7 @@ class Crawler(QWebView):
     def saveHouse(self, house):
         doc = {
             'house': house,
-            'upload': 0
+            'upload': 1
         }
         self.db['houses.marketbook-auction'].insert(doc)
 
