@@ -9,6 +9,7 @@ import random
 import time
 import re
 import traceback
+import subprocess
 from xml.etree import ElementTree as ET
 from configparser import  ConfigParser
 from PyQt4.QtGui import *
@@ -65,6 +66,11 @@ class Crawler(QWebView):
               cfg.get('mongo', 'db')
         client = MongoClient(uri)
         self.db = client[cfg.get('mongo', 'db')]
+        doc = self.db['meta.marketbook-auction'].find_one()
+        if doc is not None:
+            self.round = doc['round'] if doc['round'] is not None else 0
+        else:
+            self.round = 0
 
     def _loadFinished(self):
         html = self.page().mainFrame().toHtml()
@@ -78,7 +84,7 @@ class Crawler(QWebView):
                 self.terminate('Error page')
             try:
                 url = self.url().toString()
-                if '/default.aspx' in url:
+                if '/Default.aspx' in url:
                     self.parseCategories(soup)
                 elif '/manufacturers.aspx' in url:
                     self.parseSitemap(soup)
@@ -124,6 +130,11 @@ class Crawler(QWebView):
 
     def loadNextPage(self):
         time.sleep(self.cfg.sleep)
+
+        if self.cfg.getboolean('main', 'proxy'):
+            while not self.proxyActive():
+                time.sleep(1)
+
         if self.nextPage != None:
             self.log("Loading next page directly: " + self.nextPage)
             self.load(QUrl(self.nextPage))
@@ -140,8 +151,37 @@ class Crawler(QWebView):
                 self.nextPage = self.nextList
             elif len(self.sitemap) > 0:
                 self.nextPage = self.sitemap.pop(0)
-            self.log("Next page chosen from meta data: " + self.nextPage)
-            self.load(QUrl(self.nextPage))
+            else: # end of round
+                self.log("End of round: " + str(self.round))
+                self.round += 1
+                self.nextPage = None
+                self.saveMetaData()
+                self.terminate("End of round")
+            if self.nextPage is not None:
+                self.log("Next page chosen from meta data: " + self.nextPage)
+                self.load(QUrl(self.nextPage))
+
+    def proxyActive(self):
+        out = subprocess.Popen(['ps', 'aux'], stdout=subprocess.PIPE).communicate()[0]
+        tor, polipo = (False, False)
+        for line in out.split(b"\n"):
+            if b"/etc/init.d/tor restart" in line \
+                or b"/etc/init.d/tor restart" in line \
+                or b"/etc/init.d/tor stop" in line \
+                or b"/etc/init.d/tor reload" in line \
+                or b"/etc/init.d/tor force-reload" in line \
+                or b"/etc/init.d/polipo restart" in line \
+                or b"/etc/init.d/polipo stop" in line \
+                or b"/etc/init.d/polipo force-reload" in line:
+                self.log("Proxy inactive")
+                return False
+            if b"/usr/sbin/tor" in line:
+                self.log("Proxy: found Tor")
+                tor = True
+            if b"/usr/bin/polipo" in line:
+                self.log("Proxy: found Polipo")
+                polipo = True
+        return tor and polipo
 
     def parseCategories(self, soup):
         self.log('Parsing categories: ' + self.url().toString())
@@ -313,7 +353,7 @@ class Crawler(QWebView):
 
     def run(self, url):
         self.log("Starting crawler")
-        self.nextPage = url
+        self.nextPage = url[int(self.round) % len(url)]
         self.loadMetaData()
         self.loadHouses()
         if self.cfg.getboolean('main', 'gui'):
@@ -340,7 +380,8 @@ class Crawler(QWebView):
                'categories': self.categories,
                'sitemap': self.sitemap,
                'modelList': self.modelList,
-               'listings': self.listings}
+               'listings': self.listings,
+               'round': self.round}
         self.db['meta.marketbook-auction'].remove()
         self.db['meta.marketbook-auction'].insert(doc)
         self.log("Metadata saved")
@@ -349,13 +390,21 @@ class Crawler(QWebView):
         self.log("Loading metadata")
         doc = self.db['meta.marketbook-auction'].find_one()
         if doc != None:
-            self.nextPage = doc['nextPage']
+            self.nextPage = doc['nextPage'] if doc['nextPage'] is not None else self.nextPage
             self.nextModified = doc['nextModified']
             self.nextList = doc['nextList']
-            self.sitemap = doc['sitemap']
-            self.categories = doc['categories']
-            self.listings = doc['listings']
-            self.modelList = doc['modelList']
+            self.sitemap = doc['sitemap'] if doc['sitemap'] is not None else []
+            self.listings = doc['listings'] if doc['listings'] is not None else []
+            self.modelList = doc['modelList'] if doc['modelList'] is not None else []
+            self.categories = doc['categories'] if doc['categories'] is not None else []
+
+            # if there are any links to process do not load the sitemap again
+            if len(self.sitemap) > 0 \
+                or len(self.modelList) > 0 \
+                or len(self.listings) > 0 \
+                or len(self.categories) > 0:
+                self.nextPage = None
+
             self.log("Metadata loaded successfully")
         else:
             self.log("No metadata to load")
@@ -412,5 +461,5 @@ if __name__ == '__main__':
         QNetworkProxy.setApplicationProxy(QNetworkProxy(QNetworkProxy.HttpProxy, proxy.host(), proxy.port(), proxy.userName(), proxy.password()))
         print("Using application proxy:", proxy.toString())
     crawler = Crawler(app, cfg)
-    crawler.run('http://www.marketbook.de/HomePage/default.aspx?LP=MAT')
+    crawler.run(['http://www.marketbook.de/Homepage/Default.aspx?lp=TH', 'http://www.marketbook.de/Homepage/Default.aspx?lp=MAT'])
     sys.exit(app.exec_())
